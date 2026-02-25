@@ -18,10 +18,3 @@ def celery_config(request: SubRequest) -> dict[str, Any]:
         "worker_send_task_events": True,
         "task_send_sent_event": True,
     }
-
-
-@pytest.fixture(scope="session")
-def celery_worker_parameters() -> dict[str, Any]:
-    return {
-        "without_heartbeat": False,
-    }
