@@ -15,4 +15,13 @@ def celery_config(request: SubRequest) -> dict[str, Any]:
         "result_backend": TEST_BACKEND,
         # Test both protocol 1 and 2 via the parameterized fixture.
         "task_protocol": request.param,
+        "worker_send_task_events": True,
+        "task_send_sent_event": True,
+    }
+
+
+@pytest.fixture(scope="session")
+def celery_worker_parameters() -> dict[str, Any]:
+    return {
+        "without_heartbeat": False,
     }

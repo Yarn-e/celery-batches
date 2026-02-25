@@ -16,7 +16,7 @@ from celery.worker.request import Request
 
 import pytest
 
-from .tasks import add, cumadd
+from .tasks import add, cumadd, failing
 
 
 class SignalCounter:
@@ -217,6 +217,98 @@ def test_signals(celery_app: Celery, celery_worker: TestWorkController) -> None:
 
     for counter in signal_counters:
         counter.assert_calls()
+
+
+def test_failure_signal(celery_app: Celery, celery_worker: TestWorkController) -> None:
+    """Ensure that the task_failure signal fires when a batch task fails."""
+    checks = (
+        (signals.task_prerun, 1),
+        (signals.task_postrun, 1),
+        (signals.task_failure, 1),
+        (signals.task_success, 0),
+    )
+    signal_counters = []
+    for sig, expected_count in checks:
+        counter = SignalCounter(sig, expected_count)
+        signal_counters.append(counter)
+
+    # The batch runs after 2 task calls.
+    failing.delay()
+    failing.delay()
+
+    # Let the worker work.
+    _wait_for_ping()
+
+    for counter in signal_counters:
+        counter.assert_calls()
+
+
+class EventCapture:
+    """Captures events dispatched by the worker's event dispatcher."""
+
+    def __init__(self, celery_worker: TestWorkController):
+        self.events: List[dict] = []
+        self._original_send = celery_worker.consumer.event_dispatcher.send
+        celery_worker.consumer.event_dispatcher.send = self._capture
+
+    def _capture(self, type: str, **fields: Any) -> None:
+        self.events.append({"type": type, **fields})
+        self._original_send(type, **fields)
+
+    def get_events(self, type: str, task_name: str) -> List[dict]:
+        return [
+            e for e in self.events if e["type"] == type and e.get("name") == task_name
+        ]
+
+
+def test_events_on_success(
+    celery_app: Celery, celery_worker: TestWorkController
+) -> None:
+    """Ensure that task-started and task-succeeded events are sent
+    for a successful batch."""
+    capture = EventCapture(celery_worker)
+
+    result_1 = add.delay(1)
+    result_2 = add.delay(3)
+
+    _wait_for_ping()
+
+    assert result_1.get() == 4
+    assert result_2.get() == 4
+
+    started = capture.get_events("task-started", "t.integration.tasks.add")
+    succeeded = capture.get_events("task-succeeded", "t.integration.tasks.add")
+
+    assert len(started) == 1, f"Expected 1 task-started event, got {len(started)}"
+    assert len(succeeded) == 1, f"Expected 1 task-succeeded event, got {len(succeeded)}"
+
+    # The succeeded event should include a runtime.
+    assert "runtime" in succeeded[0]
+    assert succeeded[0]["runtime"] >= 0
+
+    # Both events should share the same batch UUID.
+    assert started[0]["uuid"] == succeeded[0]["uuid"]
+
+
+def test_events_on_failure(
+    celery_app: Celery, celery_worker: TestWorkController
+) -> None:
+    """Ensure that task-started and task-failed events are sent for a failing batch."""
+    capture = EventCapture(celery_worker)
+
+    failing.delay()
+    failing.delay()
+
+    _wait_for_ping()
+
+    started = capture.get_events("task-started", "t.integration.tasks.failing")
+    failed = capture.get_events("task-failed", "t.integration.tasks.failing")
+
+    assert len(started) == 1, f"Expected 1 task-started event, got {len(started)}"
+    assert len(failed) == 1, f"Expected 1 task-failed event, got {len(failed)}"
+
+    # Both events should share the same batch UUID.
+    assert started[0]["uuid"] == failed[0]["uuid"]
 
 
 def test_current_task(celery_app: Celery, celery_worker: TestWorkController) -> None:
