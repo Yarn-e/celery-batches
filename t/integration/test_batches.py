@@ -255,17 +255,15 @@ class EventCapture:
         self.events.append({"type": type, **fields})
         self._original_send(type, **fields)
 
-    def get_events(self, type: str, task_name: str) -> List[dict]:
-        return [
-            e for e in self.events if e["type"] == type and e.get("name") == task_name
-        ]
+    def get_events(self, type: str, uuids: set) -> List[dict]:
+        return [e for e in self.events if e["type"] == type and e.get("uuid") in uuids]
 
 
 def test_events_on_success(
     celery_app: Celery, celery_worker: TestWorkController
 ) -> None:
     """Ensure that task-started and task-succeeded events are sent
-    for a successful batch."""
+    per task in a successful batch."""
     capture = EventCapture(celery_worker)
 
     result_1 = add.delay(1)
@@ -276,39 +274,41 @@ def test_events_on_success(
     assert result_1.get() == 4
     assert result_2.get() == 4
 
-    started = capture.get_events("task-started", "t.integration.tasks.add")
-    succeeded = capture.get_events("task-succeeded", "t.integration.tasks.add")
+    task_ids = {result_1.id, result_2.id}
+    started = capture.get_events("task-started", task_ids)
+    succeeded = capture.get_events("task-succeeded", task_ids)
 
-    assert len(started) == 1, f"Expected 1 task-started event, got {len(started)}"
-    assert len(succeeded) == 1, f"Expected 1 task-succeeded event, got {len(succeeded)}"
+    # One event per task in the batch.
+    assert len(started) == 2, f"Expected 2 task-started events, got {len(started)}"
+    assert (
+        len(succeeded) == 2
+    ), f"Expected 2 task-succeeded events, got {len(succeeded)}"
 
-    # The succeeded event should include a runtime.
-    assert "runtime" in succeeded[0]
-    assert succeeded[0]["runtime"] >= 0
-
-    # Both events should share the same batch UUID.
-    assert started[0]["uuid"] == succeeded[0]["uuid"]
+    # The succeeded events should include a runtime.
+    for event in succeeded:
+        assert "runtime" in event
+        assert event["runtime"] >= 0
 
 
 def test_events_on_failure(
     celery_app: Celery, celery_worker: TestWorkController
 ) -> None:
-    """Ensure that task-started and task-failed events are sent for a failing batch."""
+    """Ensure that task-started and task-failed events are sent
+    per task in a failing batch."""
     capture = EventCapture(celery_worker)
 
-    failing.delay()
-    failing.delay()
+    result_1 = failing.delay()
+    result_2 = failing.delay()
 
     _wait_for_ping()
 
-    started = capture.get_events("task-started", "t.integration.tasks.failing")
-    failed = capture.get_events("task-failed", "t.integration.tasks.failing")
+    task_ids = {result_1.id, result_2.id}
+    started = capture.get_events("task-started", task_ids)
+    failed = capture.get_events("task-failed", task_ids)
 
-    assert len(started) == 1, f"Expected 1 task-started event, got {len(started)}"
-    assert len(failed) == 1, f"Expected 1 task-failed event, got {len(failed)}"
-
-    # Both events should share the same batch UUID.
-    assert started[0]["uuid"] == failed[0]["uuid"]
+    # One event per task in the batch.
+    assert len(started) == 2, f"Expected 2 task-started events, got {len(started)}"
+    assert len(failed) == 2, f"Expected 2 task-failed events, got {len(failed)}"
 
 
 def test_current_task(celery_app: Celery, celery_worker: TestWorkController) -> None:

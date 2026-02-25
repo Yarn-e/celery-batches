@@ -12,6 +12,7 @@ from celery import signals, states
 from celery._state import _task_stack
 from celery.app.task import Context
 from celery.utils.log import get_logger
+from kombu.utils.uuid import uuid
 
 if TYPE_CHECKING:
     from celery_batches import Batches, SimpleRequest
@@ -31,7 +32,6 @@ def apply_batches_task(
     args: tuple[list["SimpleRequest"]],
     loglevel: int,
     logfile: None,
-    task_id: str | None = None,
 ) -> Any:
     request_stack = task.request_stack
     push_request = request_stack.push
@@ -44,11 +44,8 @@ def apply_batches_task(
     success_receivers = signals.task_success.receivers
     failure_receivers = signals.task_failure.receivers
 
-    # Use the provided batch ID or fall back for backwards compatibility.
-    if task_id is None:
-        from kombu.utils.uuid import uuid
-
-        task_id = uuid()
+    # Corresponds to multiple requests, so generate a new UUID.
+    task_id = uuid()
 
     push_task(task)
     task_request = Context(loglevel=loglevel, logfile=logfile)

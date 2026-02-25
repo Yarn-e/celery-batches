@@ -174,7 +174,6 @@ class Batches(Task):
         self._count = count(1)
         self._tref: Timer | None = None
         self._pool: BasePool = None
-        self._eventer: Optional[Any] = None
 
     def run(self, *args: Any, **kwargs: Any) -> NoReturn:
         raise NotImplementedError("must implement run(requests)")
@@ -203,7 +202,6 @@ class Batches(Task):
         connection_errors = consumer.connection_errors
 
         eventer = consumer.event_dispatcher
-        self._eventer = eventer
         events = eventer and eventer.enabled
         send_event = eventer and eventer.send
         task_sends_events = events and task.send_events
@@ -375,35 +373,32 @@ class Batches(Task):
         # Ensure the requests can be serialized using pickle for the prefork pool.
         serializable_requests = ([SimpleRequest.from_request(r) for r in requests],)
 
-        # Generate a unique ID for this batch execution and capture event context.
-        batch_id = uuid()
-        eventer = self._eventer
-        task_name = self.name
-        send_events = self.send_events
-
-        def _send_event(event_type: str, **fields: Any) -> None:
-            if eventer and eventer.enabled and send_events:
-                eventer.send(event_type, uuid=batch_id, name=task_name, **fields)
-
         def on_accepted(pid: int, time_accepted: float) -> None:
-            _send_event("task-started")
-
             for req in acks_early:
                 req.acknowledge()
+
+            for request in requests:
+                request.send_event("task-started")
 
         def on_return(result: Any | None) -> None:
             if result is not None:
                 retval, state, runtime = result
-                if state == states.SUCCESS:
-                    _send_event("task-succeeded", runtime=runtime, result=repr(retval))
-                elif state == states.FAILURE:
-                    _send_event("task-failed")
+
+                for request in requests:
+                    if state == states.SUCCESS:
+                        request.send_event(
+                            "task-succeeded",
+                            runtime=runtime,
+                            result=repr(retval),
+                        )
+                    elif state == states.FAILURE:
+                        request.send_event("task-failed")
             for req in acks_late:
                 req.acknowledge()
 
         return self._pool.apply_async(
             apply_batches_task,
-            (self, serializable_requests, 0, None, batch_id),
+            (self, serializable_requests, 0, None),
             accept_callback=on_accepted,
             callback=on_return,
         )
