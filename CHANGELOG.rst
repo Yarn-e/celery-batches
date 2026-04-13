@@ -3,6 +3,14 @@
 Changelog
 #########
 
+next
+====
+
+Maintenance
+-----------
+
+* Drop support for Python 3.9 (`#106 <https://github.com/clokep/celery-batches/pull/106>`_)
+
 2026-01-16
 ==========
 
