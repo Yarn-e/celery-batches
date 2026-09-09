@@ -1,5 +1,7 @@
+from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from unittest.mock import patch
 from time import sleep
 from typing import Any
 
@@ -243,20 +245,11 @@ def test_failure_signal(celery_app: Celery, celery_worker: TestWorkController) -
         counter.assert_calls()
 
 
-class EventCapture:
-    """Captures events dispatched by the worker's event dispatcher."""
-
-    def __init__(self, celery_worker: TestWorkController):
-        self.events: list[dict] = []
-        self._original_send = celery_worker.consumer.event_dispatcher.send
-        celery_worker.consumer.event_dispatcher.send = self._capture
-
-    def _capture(self, type: str, **fields: Any) -> None:
-        self.events.append({"type": type, **fields})
-        self._original_send(type, **fields)
-
-    def get_events(self, type: str, uuids: set) -> list[dict]:
-        return [e for e in self.events if e["type"] == type and e.get("uuid") in uuids]
+def filter_events(events, type: str, uuids: set[str]) -> list:
+    # publish is called with (event type, event fields as a dict, <other things we don't care about).
+    #
+    # Note that this is called with _other_ events we don't care about (e.g. the ping events), so filter by UUID.
+    return [{"type": e[0][0], **e[0][1]} for e in events if e[0][0] == type and e[0][1].get("uuid") in uuids]
 
 
 def test_events_on_success(
@@ -264,25 +257,28 @@ def test_events_on_success(
 ) -> None:
     """Ensure that task-started and task-succeeded events are sent
     per task in a successful batch."""
-    capture = EventCapture(celery_worker)
+    with patch.object(celery_worker.consumer.event_dispatcher, "publish") as publish:
+        result_1 = add.delay(1)
+        result_2 = add.delay(3)
 
-    result_1 = add.delay(1)
-    result_2 = add.delay(3)
+        _wait_for_ping()
 
-    _wait_for_ping()
-
-    assert result_1.get() == 4
-    assert result_2.get() == 4
+        assert result_1.get() == 4
+        assert result_2.get() == 4
 
     task_ids = {result_1.id, result_2.id}
-    started = capture.get_events("task-started", task_ids)
-    succeeded = capture.get_events("task-succeeded", task_ids)
+    received = filter_events(publish.call_args_list, "task-received", task_ids)
+    started = filter_events(publish.call_args_list, "task-started", task_ids)
+    succeeded = filter_events(publish.call_args_list, "task-succeeded", task_ids)
+    failed = filter_events(publish.call_args_list, "task-failed", task_ids)
 
     # One event per task in the batch.
+    assert len(received) == 2, f"Expected 2 task-received events, got {len(received)}"
     assert len(started) == 2, f"Expected 2 task-started events, got {len(started)}"
     assert (
         len(succeeded) == 2
     ), f"Expected 2 task-succeeded events, got {len(succeeded)}"
+    assert len(failed) == 0, f"Expected 0 task-failed events, got {len(failed)}"
 
     # The succeeded events should include a runtime.
     for event in succeeded:
@@ -295,19 +291,22 @@ def test_events_on_failure(
 ) -> None:
     """Ensure that task-started and task-failed events are sent
     per task in a failing batch."""
-    capture = EventCapture(celery_worker)
+    with patch.object(celery_worker.consumer.event_dispatcher, "publish") as publish:
+        result_1 = failing.delay()
+        result_2 = failing.delay()
 
-    result_1 = failing.delay()
-    result_2 = failing.delay()
-
-    _wait_for_ping()
+        _wait_for_ping()
 
     task_ids = {result_1.id, result_2.id}
-    started = capture.get_events("task-started", task_ids)
-    failed = capture.get_events("task-failed", task_ids)
+    received = filter_events(publish.call_args_list, "task-received", task_ids)
+    started = filter_events(publish.call_args_list, "task-started", task_ids)
+    succeeded = filter_events(publish.call_args_list, "task-succeeded", task_ids)
+    failed = filter_events(publish.call_args_list, "task-failed", task_ids)
 
     # One event per task in the batch.
+    assert len(received) == 2, f"Expected 2 task-received events, got {len(received)}"
     assert len(started) == 2, f"Expected 2 task-started events, got {len(started)}"
+    assert len(succeeded) == 0, f"Expected 0 task-succeeded events, got {len(succeeded)}"
     assert len(failed) == 2, f"Expected 2 task-failed events, got {len(failed)}"
 
 
