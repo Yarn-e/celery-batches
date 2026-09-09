@@ -1,9 +1,8 @@
-from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime, timedelta
-from unittest.mock import patch
 from time import sleep
 from typing import Any
+from unittest.mock import patch
 
 from celery_batches import Batches, SimpleRequest
 
@@ -245,11 +244,16 @@ def test_failure_signal(celery_app: Celery, celery_worker: TestWorkController) -
         counter.assert_calls()
 
 
-def filter_events(events, type: str, uuids: set[str]) -> list:
-    # publish is called with (event type, event fields as a dict, <other things we don't care about).
+def filter_events(events: Any, type: str, uuids: set[str]) -> list:
+    # publish is called with (event type, event fields as a dict, <other things>.
     #
-    # Note that this is called with _other_ events we don't care about (e.g. the ping events), so filter by UUID.
-    return [{"type": e[0][0], **e[0][1]} for e in events if e[0][0] == type and e[0][1].get("uuid") in uuids]
+    # Note that this is called with _other_ events we don't care about (e.g. the
+    # ping events), so filter by UUID.
+    return [
+        {"type": e[0][0], **e[0][1]}
+        for e in events
+        if e[0][0] == type and e[0][1].get("uuid") in uuids
+    ]
 
 
 def test_events_on_success(
@@ -306,7 +310,9 @@ def test_events_on_failure(
     # One event per task in the batch.
     assert len(received) == 2, f"Expected 2 task-received events, got {len(received)}"
     assert len(started) == 2, f"Expected 2 task-started events, got {len(started)}"
-    assert len(succeeded) == 0, f"Expected 0 task-succeeded events, got {len(succeeded)}"
+    assert (
+        len(succeeded) == 0
+    ), f"Expected 0 task-succeeded events, got {len(succeeded)}"
     assert len(failed) == 2, f"Expected 2 task-failed events, got {len(failed)}"
 
 
