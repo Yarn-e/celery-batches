@@ -247,7 +247,7 @@ class EventCapture:
     """Captures events dispatched by the worker's event dispatcher."""
 
     def __init__(self, celery_worker: TestWorkController):
-        self.events: List[dict] = []
+        self.events: list[dict] = []
         self._original_send = celery_worker.consumer.event_dispatcher.send
         celery_worker.consumer.event_dispatcher.send = self._capture
 
@@ -255,7 +255,7 @@ class EventCapture:
         self.events.append({"type": type, **fields})
         self._original_send(type, **fields)
 
-    def get_events(self, type: str, uuids: set) -> List[dict]:
+    def get_events(self, type: str, uuids: set) -> list[dict]:
         return [e for e in self.events if e["type"] == type and e.get("uuid") in uuids]
 
 

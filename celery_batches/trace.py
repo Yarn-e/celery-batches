@@ -6,6 +6,8 @@ errors are recorded, handlers are applied and so on.
 Mimics some of the functionality found in celery.app.trace.trace_task.
 """
 
+import sys
+from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 from celery import signals, states
